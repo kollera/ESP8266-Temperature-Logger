@@ -3,13 +3,16 @@
 */
 //Normal Mode
 #include <ESP8266WiFi.h>
-#include <ArduinoJson.h>
+#include "JsonStreamingParser.h"
+#include "JsonListener.h"
+#include <configparser.h>
 //Config. Mode
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <FS.h>
 //Temperature Sensing.
 #include <OneWire.h>
+
 
 /*
    Configurable Settings
@@ -20,20 +23,12 @@
       3. After seeting your values, click on the 'Save' button then the 'Restart'
       4. Your logger is now configured.
 */
-String ssid;
-String password;
-String host;
-String url;
-int wc_p;         // max. time in seconds to connect to wifi, before giving up
-int gr_p;         // max. times of attemps to perform GET request, before giving up
-bool s_vcc;       //wether to send VCC voltage as a parameter in the url request.
-bool is_ip;       //wether host adress is IP
-String vcc_parm;  //parameter to pass VCC voltage by.
-String temp_parm; //parameter to pass temperature by.
-long sleepTime;
 
 //temp Sensing
 float celsius;
+
+JsonStreamingParser parser;
+ConfigListener listener;
 
 /*
    System Variables
@@ -134,10 +129,10 @@ void setup()
     Serial.println();
     Serial.println();
     Serial.print("Connecting to ");
-    Serial.println(ssid);
+    Serial.println(listener.config.ssid);
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid.c_str(), password.c_str());
+    WiFi.begin(listener.config.ssid.c_str(), listener.config.pass.c_str());
 
     while (WiFi.status() != WL_CONNECTED)
     {
@@ -145,10 +140,10 @@ void setup()
       Serial.print(".");
       //if we are taking too long to connect to WiFi give up.
       failCount++;
-      if (failCount == wc_p * 2)
+      if (failCount == listener.config.wc_p * 2)
       {
         Serial.print("Session Terminated. Giving up After ");
-        Serial.print(wc_p);
+        Serial.print(listener.config.wc_p);
         Serial.println(" Tries Connecting to WiFi.");
         delay(20);
         fail();
@@ -174,10 +169,10 @@ void loop()
   {
     //if we have tried too many times to make a GET Request give up.
     ++failCount;
-    if (failCount == gr_p + 1)
+    if (failCount == listener.config.gr_p + 1)
     {
       Serial.print("Session Terminated. Giving up After ");
-      Serial.print(gr_p);
+      Serial.print(listener.config.gr_p);
       Serial.println(" Tries Doing the GET Request.");
       delay(20);
       fail();
@@ -187,15 +182,15 @@ void loop()
     Serial.print("Try: ");
     Serial.println(failCount);
     Serial.print("Connecting to ");
-    Serial.println(host);
+    Serial.println(listener.config.host);
 
     //try to connect to the host with TCP
     WiFiClient client;
     const int httpPort = 80;
-    if (is_ip)
+    if (listener.config.is_ip)
     {
       IPAddress addr;
-      if (addr.fromString(host))
+      if (addr.fromString(listener.config.host))
       {
         if (!client.connect(addr, httpPort))
         {
@@ -214,7 +209,7 @@ void loop()
     }
     else
     {
-      if (!client.connect(host.c_str(), httpPort))
+      if (!client.connect(listener.config.host.c_str(), httpPort))
       {
         //try again if the connection fails.
         Serial.println("Connection Failed");
@@ -224,12 +219,13 @@ void loop()
     }
 
     //create the URI for the request
+    String url = String(listener.config.url);
     url += "?";
 
-    if (s_vcc)
+    if (listener.config.s_vcc)
     {
       //read vcc
-      url += vcc_parm;
+      url += listener.config.vcc_parm;
       url += "=";
       uint32_t getVcc = ESP.getVcc();
       String VccVol = String((getVcc / 1000U) % 10) + "." + String((getVcc / 100U) % 10) + String((getVcc / 10U) % 10) + String((getVcc / 1U) % 10);
@@ -237,7 +233,7 @@ void loop()
       url += "&";
     }
     //read temperature
-    url += temp_parm;
+    url += listener.config.temp_parm;
     url += "=";
     celsius = getTemp();
     url += String(celsius);
@@ -247,7 +243,7 @@ void loop()
     Serial.println(url);
 
     client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + host.c_str() + "\r\n" +
+                 "Host: " + listener.config.host.c_str() + "\r\n" +
                  "Connection: close\r\n\r\n");
 
     unsigned long timeout = millis();
@@ -289,6 +285,8 @@ void loop()
 //temp reading
 float getTemp()
 {
+
+  return 23.42f;
   byte i;
   byte present = 0;
   byte type_s;
@@ -415,7 +413,7 @@ void sleepNow()
   Serial.println("Entering Deep sleep...");
   delay(300);
   yield();
-  ESP.deepSleep(sleepTime * 60 * 1000000, WAKE_RF_DEFAULT);
+  ESP.deepSleep(listener.config.sleepTime * 60 * 1000000, WAKE_RF_DEFAULT);
   delay(1000);
 }
 
@@ -480,54 +478,42 @@ void readConfig()
     fail();
     sleepNow();
   }
-  std::unique_ptr<char[]> buf(new char[size]);
-  configFile.readBytes(buf.get(), size);
-  StaticJsonBuffer<300> jsonBuffer;
-  JsonObject &json = jsonBuffer.parseObject(buf.get());
-  if (!json.success())
-  {
-    Serial.println("Failed to Parse config. File");
-    delay(20);
-    fail();
-    sleepNow();
-  }
 
-  ssid = (const char *)json["ssid"];
-  password = (const char *)json["pass"];
-  host = (const char *)json["host"];
-  url = (const char *)json["uri"];
-  wc_p = json["wc_p"];
-  gr_p = json["gr_p"];
-  s_vcc = json["s_vcc"];
-  is_ip = json["is_ip"];
-  vcc_parm = (const char *)json["vcc_p"];
-  temp_parm = (const char *)json["temp_p"];
-  sleepTime = json["sleep"];
+    parser.setListener(&listener);
+      for(int i=0;i<configFile.size();i++) //Read upto complete file size
+      {
+        char c = (char)configFile.read();
+        parser.parse(c);
+        //Serial.print(c);
+      }
+
 
   Serial.println("Parsed JSON Config.");
   Serial.print("Loaded ssid: ");
-  Serial.println(ssid);
+  Serial.println(listener.config.ssid);
   Serial.print("Loaded password: ");
-  Serial.println(password);
+  Serial.println(listener.config.pass);
   Serial.print("Loaded host: ");
-  Serial.println(host);
+  Serial.println(listener.config.host);
   Serial.print("Loaded IsIP: ");
-  Serial.println(is_ip);
+  Serial.println(listener.config.is_ip);
   Serial.print("Loaded uri: ");
-  Serial.println(url);
+  Serial.println(listener.config.url);
   Serial.print("Loaded WiFi Connect Persistance: ");
-  Serial.println(wc_p);
+  Serial.println(listener.config.wc_p);
   Serial.print("Loaded GET Request Persistance: ");
-  Serial.println(gr_p);
+  Serial.println(listener.config.gr_p);
   Serial.print("Loaded Send VCC: ");
-  Serial.println(s_vcc);
+  Serial.println(listener.config.s_vcc);
   Serial.print("Loaded VCC Param.: ");
-  Serial.println(vcc_parm);
+  Serial.println(listener.config.vcc_parm);
   Serial.print("Loaded Temp. Param.: ");
-  Serial.println(temp_parm);
+  Serial.println(listener.config.temp_parm);
   Serial.print("Loaded Sleep Time: ");
-  Serial.println(sleepTime);
+  Serial.println(listener.config.sleepTime);
   Serial.println();
+
+      configFile.close();  //Close file
 }
 
 /*
