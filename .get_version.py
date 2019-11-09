@@ -28,4 +28,5 @@ if is_tool("git"):
             pass
         pass
 
-sys.stdout.write("-DGIT_VERSION=%s %s" % (version.decode('utf-8'), ' '.join(sys.argv[1:])))
+st = "-DGIT_VERSION=\\\"ESP8266-Temperature-Logger_%s\\\"" % version.decode('utf-8')
+sys.stdout.write(st)
