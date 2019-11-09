@@ -13,6 +13,9 @@
 //Temperature Sensing.
 #include <OneWire.h>
 
+#include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
+
 
 /*
    Configurable Settings
@@ -186,13 +189,12 @@ void loop()
 
     //try to connect to the host with TCP
     WiFiClient client;
-    const int httpPort = 80;
     if (listener.config.is_ip)
     {
       IPAddress addr;
       if (addr.fromString(listener.config.host))
       {
-        if (!client.connect(addr, httpPort))
+        if (!client.connect(addr, listener.config.port))
         {
           //try again if the connection fails.
           Serial.println("Connection To IP Failed");
@@ -209,7 +211,7 @@ void loop()
     }
     else
     {
-      if (!client.connect(listener.config.host.c_str(), httpPort))
+      if (!client.connect(listener.config.host.c_str(),  listener.config.port))
       {
         //try again if the connection fails.
         Serial.println("Connection Failed");
@@ -270,6 +272,10 @@ void loop()
     Serial.println();
     Serial.println("Closing Connection");
 
+    // check for updates
+    if(checkUpdate()==true) {
+      yield();
+    }
     //enter Deep Sleep
     // Serial.println("Entering Deep Sleep");
     delay(100);
@@ -701,4 +707,26 @@ void handleFileList()
 
   output += "]";
   server.send(200, "text/json", output);
+}
+
+bool checkUpdate() {
+  t_httpUpdate_return ret = ESPhttpUpdate.update(listener.config.host, listener.config.port,  listener.config.update , GIT_VERSION);
+Serial.print("update returned: ");
+Serial.println(ret);
+
+switch(ret) {
+    case HTTP_UPDATE_FAILED:
+        Serial.println("[update] Update failed.");
+        break;
+    case HTTP_UPDATE_NO_UPDATES:
+        Serial.println("[update] Update no Update.");
+        break;
+    case HTTP_UPDATE_OK:
+        Serial.println("[update] Update ok."); // may not called we reboot the ESP
+        return true;
+        default:
+        Serial.print("default: ");
+        Serial.println(ret);
+}
+  return false;
 }
