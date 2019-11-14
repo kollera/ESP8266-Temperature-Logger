@@ -15,6 +15,7 @@
 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
+#include "MetheoData.h"
 
 
 /*
@@ -33,6 +34,7 @@ float celsius;
 JsonStreamingParser parser;
 ConfigListener listener;
 
+MetheoData metheoData;
 /*
    System Variables
 */
@@ -220,33 +222,7 @@ void loop()
       }
     }
 
-    //create the URI for the request
-    String url = String(listener.config.url);
-    url += "?";
-
-    if (listener.config.s_vcc)
-    {
-      //read vcc
-      url += listener.config.vcc_parm;
-      url += "=";
-      uint32_t getVcc = ESP.getVcc();
-      String VccVol = String((getVcc / 1000U) % 10) + "." + String((getVcc / 100U) % 10) + String((getVcc / 10U) % 10) + String((getVcc / 1U) % 10);
-      url += VccVol;
-      url += "&";
-    }
-    //read temperature
-    url += listener.config.temp_parm;
-    url += "=";
-    celsius = getTemp();
-    url += String(celsius);
-
-    //request url to server
-    Serial.print("Requesting URL: ");
-    Serial.println(url);
-
-    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-                 "Host: " + listener.config.host.c_str() + "\r\n" +
-                 "Connection: close\r\n\r\n");
+sendData(client);
 
     unsigned long timeout = millis();
     while (client.available() == 0)
@@ -282,6 +258,46 @@ void loop()
     yay();
     sleepNow();
   }
+}
+
+void sendData(WiFiClient &client) {
+
+        metheoData.setData();
+
+    //create the URI for the request
+    String url = String(listener.config.url);
+    url += "?";
+
+    if (listener.config.s_vcc)
+    {
+      //read vcc
+      url += listener.config.vcc_parm;
+      url += "=";
+      uint32_t getVcc = ESP.getVcc();
+      String VccVol = String((getVcc / 1000U) % 10) + "." + String((getVcc / 100U) % 10) + String((getVcc / 10U) % 10) + String((getVcc / 1U) % 10);
+      url += VccVol;
+      url += "&";
+    }
+    url += "temp=" + String(metheoData.temperature);
+    url += "&hum="  +String(metheoData.humidity);
+    url += "&pres=" +String(metheoData.presure);
+    url += "&batt=" +String(ESP.getVcc());
+        if (metheoData.dataAreValid())
+        {
+    url += "&valid=true";
+        } else {
+           url += "&valid=false";
+        }
+
+    //request url to server
+    Serial.print("Requesting URL: ");
+    Serial.println(url);
+
+    client.print(String("GET ") + url + " HTTP/1.0\r\n" +
+                 "Host: " + listener.config.host.c_str() + "\r\n" +
+                 "Connection: close\r\n\r\n");
+
+
 }
 
 /*
